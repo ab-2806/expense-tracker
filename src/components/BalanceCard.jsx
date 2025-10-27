@@ -5,6 +5,7 @@ function BalanceCard({ expenses, user1Name, user2Name, onSettle, onShowHistory }
   const [showSettleModal, setShowSettleModal] = useState(false);
 
   // Calculate shared expenses and who owes who (including settlements)
+  // IMPORTANT: Uses the filtered expenses passed in, not all expenses
   const calculateBalance = () => {
     let user1Owes = 0;
     let user2Owes = 0;

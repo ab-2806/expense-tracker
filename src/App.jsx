@@ -3,12 +3,14 @@ import { ref, onValue, push, set, remove } from 'firebase/database';
 import { database, auth } from './firebase';
 import { onAuthStateChanged, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { TrendingUp, DollarSign, User, Tag, Download, Plus, Edit2, Trash2, X, Check, Filter, LogOut, RefreshCw } from 'lucide-react';
+import { TrendingUp, DollarSign, User, Tag, Download, Plus, Edit2, Trash2, X, Check, Filter, LogOut, RefreshCw, ArrowRight } from 'lucide-react';
 import Login from './components/Login';
 import BalanceCard from './components/BalanceCard';
 import PeriodSelector from './components/PeriodSelector';
 import InsightsPanel from './components/InsightsPanel';
 import SettlementHistory from './components/SettlementHistory';
+import Analytics from './components/Analytics';
+import CategoryBreakdown from './components/CategoryBreakdown';
 
 const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6'];
 
@@ -51,6 +53,7 @@ function App() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showSettlementHistory, setShowSettlementHistory] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [formData, setFormData] = useState({
     user: USER1_NAME,
@@ -109,8 +112,18 @@ function App() {
             firebaseKey: key,
             ...value
           }));
-          // Sort by expense date (not timestamp), latest first
-          setExpenses(expenseList.sort((a, b) => new Date(b.date) - new Date(a.date)));
+          // Sort by date DESC, then by timestamp DESC (newest first)
+          expenseList.sort((a, b) => {
+            // First sort by date
+            const dateCompare = new Date(b.date) - new Date(a.date);
+            if (dateCompare !== 0) return dateCompare;
+            
+            // If same date, sort by timestamp (newest first)
+            const timeA = a.timestamp ? new Date(a.timestamp).getTime() : (a.createdAt || 0);
+            const timeB = b.timestamp ? new Date(b.timestamp).getTime() : (b.createdAt || 0);
+            return timeB - timeA;
+          });
+          setExpenses(expenseList);
         } else {
           setExpenses([]);
         }
@@ -452,6 +465,18 @@ function App() {
     );
   }
 
+  // Show Analytics page if selected
+  if (showAnalytics) {
+    return (
+      <Analytics
+        expenses={expenses}
+        user1Name={USER1_NAME}
+        user2Name={USER2_NAME}
+        onBack={() => setShowAnalytics(false)}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -490,6 +515,18 @@ function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        {/* View Analytics Button - At Top */}
+        <div className="flex justify-center">
+          <button
+            onClick={() => setShowAnalytics(true)}
+            className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-8 py-4 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center gap-3 font-semibold text-lg group"
+          >
+            <TrendingUp size={24} className="group-hover:scale-110 transition-transform" />
+            View Analytics
+            <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+          </button>
+        </div>
+
         {/* Balance Card */}
         <BalanceCard 
           expenses={filteredExpenses} 
@@ -600,106 +637,11 @@ function App() {
           </div>
         </div>
 
-        {/* Insights Panel */}
-        <InsightsPanel 
-          expenses={filteredExpenses} 
-          categories={CATEGORIES}
-          user1Name={USER1_NAME}
-          user2Name={USER2_NAME}
+        {/* Category Breakdown - Compact */}
+        <CategoryBreakdown 
+          expenses={filteredExpenses}
+          onViewAnalytics={() => setShowAnalytics(true)}
         />
-
-        {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Category Breakdown - Pie Chart */}
-          {categoryData.length > 0 && (
-            <div className="bg-white rounded-2xl p-6 shadow-sm">
-              <h3 className="text-lg font-bold text-gray-800 mb-4">Category Breakdown</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={categoryData}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="value"
-                  >
-                    {categoryData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value) => `₹${value.toFixed(2)}`} />
-                  <Legend 
-                    verticalAlign="bottom" 
-                    height={36}
-                    formatter={(value, entry) => `${value}: ₹${entry.payload.value.toFixed(0)}`}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {/* User Comparison - Bar Chart */}
-          {userComparison.length > 0 && (
-            <div className="bg-white rounded-2xl p-6 shadow-sm">
-              <h3 className="text-lg font-bold text-gray-800 mb-4">User Comparison</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={userComparison}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip formatter={(value) => `₹${value.toFixed(2)}`} />
-                  <Bar dataKey="amount" fill="#8884d8" radius={[8, 8, 0, 0]}>
-                    {userComparison.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.fill} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {/* Daily Trend - Line Chart */}
-          <div className="bg-white rounded-2xl p-6 shadow-sm lg:col-span-2">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">Daily Spending Trend (Last 30 Days)</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={dailyTrend}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="date" 
-                  tick={{ fontSize: 12 }}
-                  interval="preserveStartEnd"
-                />
-                <YAxis />
-                <Tooltip formatter={(value) => `₹${value.toFixed(2)}`} />
-                <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey={USER1_NAME} 
-                  stroke="#3b82f6" 
-                  strokeWidth={2}
-                  dot={{ fill: '#3b82f6' }}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey={USER2_NAME} 
-                  stroke="#ec4899" 
-                  strokeWidth={2}
-                  dot={{ fill: '#ec4899' }}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="total" 
-                  stroke="#10b981" 
-                  strokeWidth={2}
-                  strokeDasharray="5 5"
-                  dot={{ fill: '#10b981' }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
 
         {/* Recent Transactions */}
         <div className="bg-white rounded-2xl shadow-sm">
