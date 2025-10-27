@@ -8,6 +8,7 @@ import Login from './components/Login';
 import BalanceCard from './components/BalanceCard';
 import PeriodSelector from './components/PeriodSelector';
 import InsightsPanel from './components/InsightsPanel';
+import SettlementHistory from './components/SettlementHistory';
 
 const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6'];
 
@@ -49,6 +50,7 @@ function App() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
+  const [showSettlementHistory, setShowSettlementHistory] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [formData, setFormData] = useState({
     user: USER1_NAME,
@@ -350,6 +352,32 @@ function App() {
     }
   };
 
+  const handleSettlement = async (balance) => {
+    if (!user) return;
+
+    const timestamp = new Date().toISOString();
+    const settlementExpense = {
+      id: `settlement_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      type: 'settlement',
+      amount: parseFloat(balance.netBalance),
+      paidBy: balance.owedBy,
+      paidTo: balance.owedTo,
+      date: new Date().toISOString().split('T')[0],
+      timestamp: timestamp,
+      settledBy: user.email === 'asbt2001@gmail.com' ? USER1_NAME : USER2_NAME,
+      note: `Settlement: ${balance.owedBy} paid ${balance.owedTo} ₹${balance.netBalance.toFixed(2)}`,
+      createdAt: Date.now()
+    };
+
+    try {
+      await push(ref(database, 'expenses'), settlementExpense);
+      alert('✅ Settlement recorded successfully!');
+    } catch (error) {
+      console.error('Error recording settlement:', error);
+      alert('Failed to record settlement. Please try again.');
+    }
+  };
+
   const openEditModal = (expense) => {
     setEditingExpense(expense);
     setFormData({
@@ -467,6 +495,8 @@ function App() {
           expenses={filteredExpenses} 
           user1Name={USER1_NAME} 
           user2Name={USER2_NAME}
+          onSettle={handleSettlement}
+          onShowHistory={() => setShowSettlementHistory(true)}
         />
 
         {/* Filter Panel */}
@@ -696,37 +726,65 @@ function App() {
               <div className="divide-y divide-gray-100">
                 {filteredExpenses.map((expense) => {
                   const category = CATEGORIES.find(c => c.value === expense.category);
+                  const isSettlement = expense.type === 'settlement';
+                  
                   return (
                     <div
                       key={expense.firebaseKey}
-                      className="p-4 hover:bg-gray-50 transition flex items-center justify-between"
+                      className={`p-4 hover:bg-gray-50 transition flex items-center justify-between ${
+                        isSettlement ? 'bg-green-50' : ''
+                      }`}
                     >
                       <div className="flex items-center gap-4 flex-1">
                         <div 
-                          className="w-12 h-12 rounded-full flex items-center justify-center text-2xl"
-                          style={{ backgroundColor: `${category?.color}20` }}
+                          className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${
+                            isSettlement 
+                              ? 'bg-green-500 text-white' 
+                              : `bg-${category?.color}20`
+                          }`}
+                          style={!isSettlement ? { backgroundColor: `${category?.color}20` } : {}}
                         >
-                          {category?.label.split(' ')[0]}
+                          {isSettlement ? '💸' : category?.label.split(' ')[0]}
                         </div>
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
-                            <p className="font-semibold text-gray-800">{category?.label}</p>
+                            <p className="font-semibold text-gray-800">
+                              {isSettlement ? 'Settlement' : category?.label}
+                            </p>
                             <span className={`text-xs px-2 py-1 rounded-full ${
-                              (expense.type || 'personal') === 'shared' 
+                              isSettlement
+                                ? 'bg-green-100 text-green-700'
+                                : (expense.type || 'personal') === 'shared' 
                                 ? 'bg-purple-100 text-purple-700'
                                 : 'bg-gray-100 text-gray-700'
                             }`}>
-                              {(expense.type || 'personal') === 'shared' ? '👥 Shared' : '👤 Personal'}
+                              {isSettlement 
+                                ? '💸 Settlement' 
+                                : (expense.type || 'personal') === 'shared' 
+                                ? '👥 Shared' 
+                                : '👤 Personal'
+                              }
                             </span>
                           </div>
                           <p className="text-sm text-gray-500">
                             {expense.note || 'No note'}
                           </p>
                           <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
-                            <span>{expense.user}</span>
-                            <span>•</span>
+                            {isSettlement ? (
+                              <>
+                                <span className="font-medium text-green-600">
+                                  {expense.paidBy} → {expense.paidTo}
+                                </span>
+                                <span>•</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>{expense.user}</span>
+                                <span>•</span>
+                              </>
+                            )}
                             <span>{new Date(expense.date).toLocaleDateString()}</span>
-                            {expense.type === 'shared' && (
+                            {expense.type === 'shared' && !isSettlement && (
                               <>
                                 <span>•</span>
                                 <span className="text-purple-600">
@@ -738,23 +796,27 @@ function App() {
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
-                        <p className="text-xl font-bold text-gray-800">
+                        <p className={`text-xl font-bold ${
+                          isSettlement ? 'text-green-600' : 'text-gray-800'
+                        }`}>
                           ₹{parseFloat(expense.amount).toFixed(2)}
                         </p>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => openEditModal(expense)}
-                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                          >
-                            <Edit2 size={16} />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteExpense(expense)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
+                        {!isSettlement && (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => openEditModal(expense)}
+                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteExpense(expense)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -1097,6 +1159,16 @@ function App() {
             </form>
           </div>
         </div>
+      )}
+      
+      {/* Settlement History Modal */}
+      {showSettlementHistory && (
+        <SettlementHistory
+          expenses={expenses}
+          user1Name={USER1_NAME}
+          user2Name={USER2_NAME}
+          onClose={() => setShowSettlementHistory(false)}
+        />
       )}
     </div>
   );
