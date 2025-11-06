@@ -7,10 +7,10 @@ function CategoryBreakdown({ expenses, onViewAnalytics }) {
   // Exclude settlements from category analysis
   const nonSettlementExpenses = expenses.filter(e => e.type !== 'settlement');
 
-  // Calculate category data
+  // Calculate category data using attributedAmount
   const categoryData = nonSettlementExpenses.reduce((acc, expense) => {
     const category = expense.category || 'Other';
-    acc[category] = (acc[category] || 0) + parseFloat(expense.amount || 0);
+    acc[category] = (acc[category] || 0) + parseFloat(expense.attributedAmount || expense.amount || 0);
     return acc;
   }, {});
 

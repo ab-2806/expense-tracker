@@ -1,6 +1,6 @@
-import { X, DollarSign, Calendar, User } from 'lucide-react';
+import { X, DollarSign, Calendar, User, Edit2, Trash2 } from 'lucide-react';
 
-function SettlementHistory({ expenses, user1Name, user2Name, onClose }) {
+function SettlementHistory({ expenses, user1Name, user2Name, onClose, onEdit, onDelete }) {
   // Filter only settlement transactions
   const settlements = expenses
     .filter(exp => exp.type === 'settlement')
@@ -61,10 +61,28 @@ function SettlementHistory({ expenses, user1Name, user2Name, onClose }) {
                         </p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-2xl font-bold text-green-600">
-                        ₹{parseFloat(settlement.amount).toFixed(2)}
-                      </p>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <p className="text-2xl font-bold text-green-600">
+                          ₹{parseFloat(settlement.amount).toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => onEdit(settlement)}
+                          className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition"
+                          title="Edit Settlement"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button
+                          onClick={() => onDelete(settlement)}
+                          className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition"
+                          title="Delete Settlement"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -79,7 +97,7 @@ function SettlementHistory({ expenses, user1Name, user2Name, onClose }) {
                     </div>
                     <div className="flex items-center gap-1">
                       <User size={14} />
-                      <span>Settled by: {settlement.settledBy}</span>
+                      <span>Settled by: {settlement.settledBy || settlement.paidBy}</span>
                     </div>
                   </div>
 

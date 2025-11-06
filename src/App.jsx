@@ -145,13 +145,72 @@ function App() {
     }
   };
 
+  // Helper function to get attributed expenses (shared expenses attributed to both users)
+  const getAttributedExpenses = () => {
+    const attributed = [];
+    
+    expenses.forEach(expense => {
+      if (expense.type === 'shared') {
+        // For shared expenses, create two attributed entries (one for each user)
+        const splitAmount = expense.splitAmount || (expense.amount / 2);
+        
+        // Entry for the person who paid
+        attributed.push({
+          ...expense,
+          attributedAmount: expense.amount, // Full amount for who paid
+          attributedUser: expense.user,
+          isPaidByUser: true
+        });
+        
+        // Entry for the person who owes (the other user's share)
+        const otherUser = expense.user === USER1_NAME ? USER2_NAME : USER1_NAME;
+        attributed.push({
+          ...expense,
+          attributedAmount: splitAmount, // Split amount for who owes
+          attributedUser: otherUser,
+          isPaidByUser: false,
+          originalExpenseId: expense.firebaseKey // Track original expense
+        });
+      } else if (expense.type === 'settlement') {
+        // For settlements, create two attributed entries (visible to both users)
+        // Entry for the person who paid (paidBy)
+        attributed.push({
+          ...expense,
+          attributedAmount: expense.amount,
+          attributedUser: expense.paidBy,
+          isPaidByUser: true,
+          user: expense.paidBy // Set user for consistency
+        });
+        
+        // Entry for the person who received (paidTo)
+        attributed.push({
+          ...expense,
+          attributedAmount: expense.amount,
+          attributedUser: expense.paidTo,
+          isPaidByUser: false,
+          user: expense.paidTo // Set user for consistency
+        });
+      } else {
+        // For personal expenses, attribute to the actual user
+        attributed.push({
+          ...expense,
+          attributedAmount: expense.amount,
+          attributedUser: expense.user,
+          isPaidByUser: true
+        });
+      }
+    });
+    
+    return attributed;
+  };
+
   // Filter expenses based on all criteria
   const filterExpenses = () => {
-    let filtered = [...expenses];
+    let filtered = getAttributedExpenses();
 
-    // User filter
+    // User filter - now filters by attributedUser instead of user
     if (filter.user !== 'all') {
-      filtered = filtered.filter(e => e.user === filter.user);
+      filtered = filtered.filter(e => e.attributedUser === filter.user);
     }
 
     // Category filter
@@ -195,19 +254,28 @@ function App() {
 
   const filteredExpenses = filterExpenses();
 
-  // Calculate totals
-  const totalSpent = filteredExpenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-  const user1Total = filteredExpenses.filter(e => e.user === USER1_NAME).reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-  const user2Total = filteredExpenses.filter(e => e.user === USER2_NAME).reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+  // For display purposes, we need to deduplicate shared expenses
+  // When no user filter is active, show each expense once (for the person who paid)
+  // When user filter is active, show attributed expenses (including their share of others' payments)
+  const displayExpenses = filter.user === 'all' 
+    ? filteredExpenses.filter(e => e.isPaidByUser !== false) // Only show expenses paid by users, not attributed shares
+    : filteredExpenses; // When filtering by user, show all attributed expenses including shares
 
-  // Personal vs Shared totals
-  const personalTotal = filteredExpenses.filter(e => (e.type || 'personal') === 'personal').reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-  const sharedTotal = filteredExpenses.filter(e => e.type === 'shared').reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+  // Calculate totals using attributedAmount - EXCLUDE settlements (they're money transfers, not expenses)
+  const nonSettlementExpenses = filteredExpenses.filter(e => e.type !== 'settlement');
+  
+  const totalSpent = nonSettlementExpenses.reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0);
+  const user1Total = nonSettlementExpenses.filter(e => e.attributedUser === USER1_NAME).reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0);
+  const user2Total = nonSettlementExpenses.filter(e => e.attributedUser === USER2_NAME).reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0);
 
-  // Category breakdown
+  // Personal vs Shared totals (using attributedAmount, excluding settlements)
+  const personalTotal = nonSettlementExpenses.filter(e => (e.type || 'personal') === 'personal').reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0);
+  const sharedTotal = nonSettlementExpenses.filter(e => e.type === 'shared').reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0);
+
+  // Category breakdown (using attributedAmount, excluding settlements)
   const categoryData = CATEGORIES.map(cat => ({
     name: cat.label,
-    value: filteredExpenses.filter(e => e.category === cat.value).reduce((sum, e) => sum + parseFloat(e.amount || 0), 0),
+    value: nonSettlementExpenses.filter(e => e.category === cat.value).reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0),
     color: cat.color
   })).filter(item => item.value > 0);
 
@@ -302,35 +370,50 @@ function App() {
       return;
     }
 
-    // Calculate split amount for shared expenses
-    let splitAmount = 0;
-    let splitWith = formData.user === USER1_NAME ? USER2_NAME : USER1_NAME;
+    let updatedExpense;
 
-    if (formData.type === 'shared') {
-      if (formData.useCustomSplit && formData.customSplitAmount) {
-        splitAmount = parseFloat(formData.customSplitAmount);
-        if (splitAmount > parseFloat(formData.amount)) {
-          alert('Split amount cannot be greater than total amount');
-          return;
+    // Handle settlement editing differently
+    if (formData.type === 'settlement') {
+      updatedExpense = {
+        ...editingExpense,
+        amount: parseFloat(formData.amount),
+        date: formData.date,
+        note: formData.note || '',
+        paidBy: formData.paidBy || formData.user,
+        paidTo: formData.paidTo || (formData.user === USER1_NAME ? USER2_NAME : USER1_NAME),
+        updatedAt: Date.now()
+      };
+    } else {
+      // Calculate split amount for shared expenses
+      let splitAmount = 0;
+      let splitWith = formData.user === USER1_NAME ? USER2_NAME : USER1_NAME;
+
+      if (formData.type === 'shared') {
+        if (formData.useCustomSplit && formData.customSplitAmount) {
+          splitAmount = parseFloat(formData.customSplitAmount);
+          if (splitAmount > parseFloat(formData.amount)) {
+            alert('Split amount cannot be greater than total amount');
+            return;
+          }
+        } else {
+          splitAmount = parseFloat(formData.amount) / 2;
         }
-      } else {
-        splitAmount = parseFloat(formData.amount) / 2;
       }
-    }
 
-    const updatedExpense = {
-      ...editingExpense,
-      user: formData.user,
-      category: formData.category,
-      amount: parseFloat(formData.amount),
-      date: formData.date,
-      note: formData.note || '',
-      type: formData.type,
-      splitAmount: formData.type === 'shared' ? splitAmount : 0,
-      splitWith: formData.type === 'shared' ? splitWith : '',
-      customSplit: formData.type === 'shared' ? formData.useCustomSplit : false,
-      updatedAt: Date.now()
-    };
+      updatedExpense = {
+        ...editingExpense,
+        user: formData.user,
+        category: formData.category,
+        amount: parseFloat(formData.amount),
+        date: formData.date,
+        note: formData.note || '',
+        type: formData.type,
+        splitAmount: formData.type === 'shared' ? splitAmount : 0,
+        splitWith: formData.type === 'shared' ? splitWith : '',
+        customSplit: formData.type === 'shared' ? formData.useCustomSplit : false,
+        updatedAt: Date.now()
+      };
+    }
 
     try {
       await set(ref(database, `expenses/${editingExpense.firebaseKey}`), updatedExpense);
@@ -393,16 +476,33 @@ function App() {
 
   const openEditModal = (expense) => {
     setEditingExpense(expense);
-    setFormData({
-      user: expense.user,
-      category: expense.category,
-      amount: expense.amount.toString(),
-      date: expense.date,
-      note: expense.note || '',
-      type: expense.type || 'personal',
-      customSplitAmount: expense.customSplit ? expense.splitAmount.toString() : '',
-      useCustomSplit: expense.customSplit || false
-    });
+    
+    // Handle settlements differently
+    if (expense.type === 'settlement') {
+      setFormData({
+        user: expense.paidBy, // Who paid
+        category: 'settlement',
+        amount: expense.amount.toString(),
+        date: expense.date,
+        note: expense.note || '',
+        type: 'settlement',
+        customSplitAmount: '',
+        useCustomSplit: false,
+        paidBy: expense.paidBy,
+        paidTo: expense.paidTo
+      });
+    } else {
+      setFormData({
+        user: expense.user,
+        category: expense.category,
+        amount: expense.amount.toString(),
+        date: expense.date,
+        note: expense.note || '',
+        type: expense.type || 'personal',
+        customSplitAmount: expense.customSplit ? expense.splitAmount.toString() : '',
+        useCustomSplit: expense.customSplit || false
+      });
+    }
     setShowEditModal(true);
   };
 
@@ -529,7 +629,7 @@ function App() {
 
         {/* Balance Card */}
         <BalanceCard 
-          expenses={filteredExpenses} 
+          expenses={expenses}
           user1Name={USER1_NAME} 
           user2Name={USER2_NAME}
           onSettle={handleSettlement}
@@ -608,7 +708,7 @@ function App() {
               <DollarSign className="text-blue-600" size={24} />
             </div>
             <p className="text-3xl font-bold text-gray-800">₹{totalSpent.toFixed(2)}</p>
-            <p className="text-xs text-gray-500 mt-1">{filteredExpenses.length} expenses</p>
+            <p className="text-xs text-gray-500 mt-1">{nonSettlementExpenses.length} expenses</p>
           </div>
 
           <div className="bg-white rounded-xl p-6 shadow-sm hover:shadow-md transition">
@@ -647,7 +747,7 @@ function App() {
         <div className="bg-white rounded-2xl shadow-sm">
           <div className="p-6 border-b border-gray-200 flex items-center justify-between">
             <h3 className="text-lg font-bold text-gray-800">
-              Recent Transactions ({filteredExpenses.length})
+              Recent Transactions ({displayExpenses.length})
             </h3>
             <button
               onClick={exportToCSV}
@@ -659,20 +759,20 @@ function App() {
           </div>
           
           <div className="max-h-96 overflow-y-auto">
-            {filteredExpenses.length === 0 ? (
+            {displayExpenses.length === 0 ? (
               <div className="p-12 text-center">
                 <p className="text-gray-400 text-lg">No expenses found</p>
                 <p className="text-gray-400 text-sm mt-2">Add your first expense to get started</p>
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
-                {filteredExpenses.map((expense) => {
+                {displayExpenses.map((expense, index) => {
                   const category = CATEGORIES.find(c => c.value === expense.category);
                   const isSettlement = expense.type === 'settlement';
                   
                   return (
                     <div
-                      key={expense.firebaseKey}
+                      key={`${expense.firebaseKey}-${expense.attributedUser || ''}-${index}`}
                       className={`p-4 hover:bg-gray-50 transition flex items-center justify-between ${
                         isSettlement ? 'bg-green-50' : ''
                       }`}
@@ -718,10 +818,12 @@ function App() {
                                   {expense.paidBy} → {expense.paidTo}
                                 </span>
                                 <span>•</span>
+                                <span>Settled by: {expense.settledBy || expense.paidBy}</span>
+                                <span>•</span>
                               </>
                             ) : (
                               <>
-                                <span>{expense.user}</span>
+                                <span>{expense.user} {!expense.isPaidByUser && expense.type === 'shared' ? '(paid)' : ''}</span>
                                 <span>•</span>
                               </>
                             )}
@@ -730,7 +832,10 @@ function App() {
                               <>
                                 <span>•</span>
                                 <span className="text-purple-600">
-                                  Split: ₹{expense.splitAmount?.toFixed(2)} with {expense.splitWith}
+                                  {expense.isPaidByUser 
+                                    ? `Split: ₹${expense.splitAmount?.toFixed(2)} with ${expense.splitWith}`
+                                    : `Your share: ₹${expense.attributedAmount?.toFixed(2)}`
+                                  }
                                 </span>
                               </>
                             )}
@@ -741,13 +846,14 @@ function App() {
                         <p className={`text-xl font-bold ${
                           isSettlement ? 'text-green-600' : 'text-gray-800'
                         }`}>
-                          ₹{parseFloat(expense.amount).toFixed(2)}
+                          ₹{parseFloat(expense.attributedAmount || expense.amount).toFixed(2)}
                         </p>
-                        {!isSettlement && (
+                        {expense.isPaidByUser && (
                           <div className="flex gap-2">
                             <button
                               onClick={() => openEditModal(expense)}
                               className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                              title="Edit"
                             >
                               <Edit2 size={16} />
                             </button>
@@ -945,12 +1051,22 @@ function App() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
           <div className="bg-white rounded-t-3xl sm:rounded-xl w-full sm:max-w-md sm:w-full max-h-[90vh] overflow-y-auto">
             <div className="sticky top-0 bg-white p-6 border-b flex justify-between items-center">
-              <h2 className="text-2xl font-bold">Edit Expense</h2>
+              <h2 className="text-2xl font-bold">
+                {formData.type === 'settlement' ? 'Edit Settlement' : 'Edit Expense'}
+              </h2>
               <button onClick={() => { setShowEditModal(false); setEditingExpense(null); }} className="p-2 hover:bg-gray-100 rounded-full">
                 <X size={24} />
               </button>
             </div>
             <form onSubmit={handleEditExpense} className="p-6 space-y-4">
+              {formData.type === 'settlement' && (
+                <div className="bg-green-50 rounded-lg p-4 mb-4">
+                  <p className="text-sm text-green-800 font-semibold mb-2">💸 Settlement Transaction</p>
+                  <p className="text-xs text-green-700">
+                    This settlement offsets the balance between {formData.paidBy || formData.user} and {formData.paidTo || (formData.user === USER1_NAME ? USER2_NAME : USER1_NAME)}
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="block text-gray-700 font-semibold mb-2">Expense Type</label>
                 <div className="grid grid-cols-2 gap-3">
@@ -1110,6 +1226,11 @@ function App() {
           user1Name={USER1_NAME}
           user2Name={USER2_NAME}
           onClose={() => setShowSettlementHistory(false)}
+          onEdit={(settlement) => {
+            setShowSettlementHistory(false);
+            openEditModal(settlement);
+          }}
+          onDelete={handleDeleteExpense}
         />
       )}
     </div>

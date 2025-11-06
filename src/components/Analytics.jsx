@@ -25,9 +25,49 @@ function Analytics({ expenses, user1Name, user2Name, onBack }) {
     expenseType: 'all'
   });
 
+  // Helper function to get attributed expenses (same logic as in App.jsx)
+  const getAttributedExpenses = (expenseList) => {
+    const attributed = [];
+    
+    expenseList.forEach(expense => {
+      if (expense.type === 'shared') {
+        // For shared expenses, create two attributed entries (one for each user)
+        const splitAmount = expense.splitAmount || (expense.amount / 2);
+        
+        // Entry for the person who paid
+        attributed.push({
+          ...expense,
+          attributedAmount: expense.amount, // Full amount for who paid
+          attributedUser: expense.user,
+          isPaidByUser: true
+        });
+        
+        // Entry for the person who owes (the other user's share)
+        const otherUser = expense.user === user1Name ? user2Name : user1Name;
+        attributed.push({
+          ...expense,
+          attributedAmount: splitAmount, // Split amount for who owes
+          attributedUser: otherUser,
+          isPaidByUser: false,
+          originalExpenseId: expense.firebaseKey // Track original expense
+        });
+      } else {
+        // For personal expenses and settlements, attribute to the actual user
+        attributed.push({
+          ...expense,
+          attributedAmount: expense.amount,
+          attributedUser: expense.user,
+          isPaidByUser: true
+        });
+      }
+    });
+    
+    return attributed;
+  };
+
   // Filter expenses by period AND filters
   const getFilteredExpenses = () => {
-    let result = [...expenses];
+    let result = getAttributedExpenses(expenses);
     
     // Period filter
     const now = new Date();
@@ -39,9 +79,9 @@ function Analytics({ expenses, user1Name, user2Name, onBack }) {
       result = result.filter(e => new Date(e.date) >= weekAgo);
     }
 
-    // User filter
+    // User filter - now filters by attributedUser
     if (filters.user !== 'all') {
-      result = result.filter(e => e.user === filters.user);
+      result = result.filter(e => e.attributedUser === filters.user);
     }
 
     // Category filter
@@ -62,10 +102,10 @@ function Analytics({ expenses, user1Name, user2Name, onBack }) {
   // Exclude settlements from category analysis
   const nonSettlementExpenses = filteredExpenses.filter(e => e.type !== 'settlement');
 
-  // 1. Category Breakdown
+  // 1. Category Breakdown - using attributedAmount
   const categoryData = nonSettlementExpenses.reduce((acc, expense) => {
     const category = expense.category || 'Other';
-    acc[category] = (acc[category] || 0) + parseFloat(expense.amount || 0);
+    acc[category] = (acc[category] || 0) + parseFloat(expense.attributedAmount || 0);
     return acc;
   }, {});
 
@@ -73,14 +113,14 @@ function Analytics({ expenses, user1Name, user2Name, onBack }) {
     .map(([name, value]) => ({ name, value: parseFloat(value.toFixed(2)) }))
     .sort((a, b) => b.value - a.value);
 
-  // 2. User Spending Breakdown
+  // 2. User Spending Breakdown - using attributedAmount
   const userSpending = {
     [user1Name]: nonSettlementExpenses
-      .filter(e => e.user === user1Name)
-      .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0),
+      .filter(e => e.attributedUser === user1Name)
+      .reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0),
     [user2Name]: nonSettlementExpenses
-      .filter(e => e.user === user2Name)
-      .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0)
+      .filter(e => e.attributedUser === user2Name)
+      .reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0)
   };
 
   const userChartData = [
@@ -88,14 +128,14 @@ function Analytics({ expenses, user1Name, user2Name, onBack }) {
     { name: user2Name, value: parseFloat(userSpending[user2Name].toFixed(2)) }
   ];
 
-  // 3. Personal vs Shared
+  // 3. Personal vs Shared - using attributedAmount
   const typeBreakdown = {
     personal: nonSettlementExpenses
       .filter(e => e.type === 'personal' || !e.type)
-      .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0),
+      .reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0),
     shared: nonSettlementExpenses
       .filter(e => e.type === 'shared')
-      .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0)
+      .reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0)
   };
 
   const typeChartData = [
@@ -103,7 +143,7 @@ function Analytics({ expenses, user1Name, user2Name, onBack }) {
     { name: 'Shared', value: parseFloat(typeBreakdown.shared.toFixed(2)) }
   ];
 
-  // 4. Daily Spending Trend (Last 7 days)
+  // 4. Daily Spending Trend (Last 7 days) - using attributedAmount
   const getLast7Days = () => {
     const days = [];
     for (let i = 6; i >= 0; i--) {
@@ -117,26 +157,26 @@ function Analytics({ expenses, user1Name, user2Name, onBack }) {
   const last7Days = getLast7Days();
   const dailySpending = last7Days.map(date => {
     const dayExpenses = nonSettlementExpenses.filter(e => e.date === date);
-    const total = dayExpenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+    const total = dayExpenses.reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0);
     return {
       date: new Date(date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
       amount: parseFloat(total.toFixed(2))
     };
   });
 
-  // 5. Key Metrics
-  const totalSpent = nonSettlementExpenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+  // 5. Key Metrics - using attributedAmount
+  const totalSpent = nonSettlementExpenses.reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0);
   const avgPerDay = totalSpent / (filteredExpenses.length > 0 ? 
     Math.max(1, Math.ceil((new Date() - new Date(Math.min(...filteredExpenses.map(e => new Date(e.date))))) / (1000 * 60 * 60 * 24))) : 1);
   const avgPerTransaction = totalSpent / (nonSettlementExpenses.length || 1);
   const highestCategory = categoryChartData[0] || { name: 'N/A', value: 0 };
   const totalTransactions = nonSettlementExpenses.length;
 
-  // 6. Shared Expense Analysis
+  // 6. Shared Expense Analysis - using attributedAmount
   const sharedExpenses = filteredExpenses.filter(e => e.type === 'shared');
-  const totalShared = sharedExpenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-  const user1SharedContribution = sharedExpenses.filter(e => e.user === user1Name).reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-  const user2SharedContribution = sharedExpenses.filter(e => e.user === user2Name).reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+  const totalShared = sharedExpenses.reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0);
+  const user1SharedContribution = sharedExpenses.filter(e => e.attributedUser === user1Name).reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0);
+  const user2SharedContribution = sharedExpenses.filter(e => e.attributedUser === user2Name).reduce((sum, e) => sum + parseFloat(e.attributedAmount || 0), 0);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 pb-20">
